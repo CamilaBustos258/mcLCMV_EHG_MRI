@@ -49,6 +49,41 @@ export MCLCMV_SOURCEDATA=/path/to/your/sourcedata
 
 If the variable is not set, the pipeline defaults to `data/sourcedata/` inside the project tree.
 
+### Coordinate system
+
+All MRI volumes, organ surface meshes, and electrode positions are expressed
+in a common anatomical coordinate system:
+
+| Axis | Direction | Anatomical meaning |
+|------|-----------|-------------------|
+| X    | R → L     | Right to Left |
+| Y    | A → P     | Anterior to Posterior |
+| Z    | I → S     | Inferior to Superior (foot to head) |
+
+This convention matters because all geometry-dependent computations — DOA
+vectors, steering dictionaries, and beamformer weights — assume coordinates
+are in this frame.  MRI scanners acquire volumes in varying orientations
+depending on scanner settings and patient position, so the raw NIfTI files
+typically need to be reoriented before processing.
+
+### Orientation registry
+
+`config/orientation_registry.json` records the reorientation transform
+required for each session.  It is not included in the repository (it contains
+session metadata); copy `config/orientation_registry.example.json` and fill in
+your own sessions.  Each entry specifies an `orientation_case` string of the
+form `T1_(i,j,k)[_flipX][_flipY][_flipZ]`:
+
+- `(i,j,k)` is the axis permutation applied to the raw volume so that the
+  resulting axes correspond to X=RL, Y=AP, Z=IS.
+- Optional `_flipX / _flipY / _flipZ` flags invert the corresponding axis
+  after permutation, correcting for scanners that acquire with reversed
+  polarity on that axis.
+
+For example, `T1_(2,0,1)_flipZ` means: take axis 2 of the raw volume as the
+new X, axis 0 as the new Y, axis 1 as the new Z, then flip the Z direction.
+The result is a volume correctly oriented for anatomy-guided beamforming.
+
 ## Usage
 
 ```bash
