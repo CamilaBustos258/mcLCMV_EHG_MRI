@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mclcmv"
+version = "0.1.0"
+description = "Anatomy-guided multicluster LCMV beamforming for uterus–bladder separation in paired EHG-MRI data."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Maria Camila Bustos-Vivas" }]
+license = { text = "MIT" }
+keywords = ["EHG", "MRI", "LCMV", "beamforming", "uterus", "bladder", "electrohysterography"]
+
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "pandas>=2.1",
+    "nibabel>=5.2",          # NIfTI I/O
+    "pydicom>=2.4",          # DICOM I/O
+    "mne>=1.6",              # BrainVision .vhdr/.vmrk/.eeg reader
+    "matplotlib>=3.8",
+    "PyYAML>=6.0",
+    "tqdm>=4.66",
+    "click>=8.1",            # CLI entry points
+    "scikit-image>=0.21",    # marching cubes surface extraction
+    "scikit-learn>=1.3",     # DBSCAN electrode clustering, spherical k-means
+    "plotly>=5.0",           # interactive 3-D HTML figures
+    "pywavelets>=1.5",       # CWT / Morlet scalograms
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.5",
+    "black>=24.4",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "ipykernel>=6.29",
+    "jupyter>=1.0",
+]
+
+[project.scripts]
+mclcmv-cli = "mclcmv.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "SIM"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: marks tests that require real data in data/derivatives/ (deselect with -m 'not integration')",
+]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true

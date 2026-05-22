@@ -1,0 +1,21 @@
+{
+  "sub-01": {
+    "ses-YYYYMMDD": {
+      "orientation_case": "T1_(2,0,1)_flipZ",
+      "sex": "F",
+      "cycle_phase": "Follicular"
+    }
+  },
+  "sub-02": {
+    "ses-YYYYMMDD": {
+      "orientation_case": "T1_(0,2,1)_flipZ",
+      "sex": "F",
+      "cycle_phase": "Luteal"
+    },
+    "ses-YYYYMMDD": {
+      "orientation_case": "T1_(2,1,0)_flipZ",
+      "sex": "M",
+      "cycle_phase": null
+    }
+  }
+}
