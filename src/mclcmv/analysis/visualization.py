@@ -75,41 +75,6 @@ def plot_time_series_overlays(
     return fig
 
 
-def plot_covariance_eigenvalues(
-    diagnostics: list[dict],
-    which_window: int = 0,
-    title: str = "Covariance eigenspectrum",
-) -> plt.Figure:
-    """Semilog plot of the sorted covariance eigenvalues for one window.
-
-    Parameters
-    ----------
-    diagnostics  : list returned by ``run_windowed_lcmv``
-    which_window : index of the window to inspect (default 0)
-    title        : figure title
-
-    Returns
-    -------
-    fig : matplotlib Figure
-    """
-    evals = np.abs(np.array(diagnostics[which_window].get("R_eig", [])))
-    if evals.size == 0:
-        raise ValueError(
-            "diagnostics entries do not contain 'R_eig'. "
-            "Re-run run_windowed_lcmv with store_covariance=True."
-        )
-    evals_sorted = np.sort(evals)[::-1]
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.semilogy(evals_sorted, "o-", lw=1.1)
-    ax.set_xlabel("Eigenvalue rank (descending)")
-    ax.set_ylabel("|Eigenvalue|")
-    ax.grid(True, alpha=0.2)
-    ax.set_title(f"{title} — window {which_window}")
-    plt.tight_layout()
-    return fig
-
-
 def plot_array_response_over_vertices(
     w: np.ndarray,
     steering_dict: np.ndarray,

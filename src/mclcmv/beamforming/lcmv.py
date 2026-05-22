@@ -283,10 +283,21 @@ def leakage_subtraction(
     y_uterus: np.ndarray,
     y_bladder: np.ndarray,
 ) -> tuple[np.ndarray, float]:
-    """Remove coherent uterus leakage from the bladder estimate.
+    """Remove coherent uterus leakage from the bladder estimate (global OLS).
 
-    Estimates a scalar leakage coefficient α = <ŷ_B, ŷ_U> / <ŷ_U, ŷ_U>
-    and subtracts the coherent uterus component from the bladder signal.
+    Computes a scalar leakage coefficient as a single ordinary-least-squares
+    projection over the full reconstructed signals:
+
+        α = <ŷ_B, ŷ_U> / <ŷ_U, ŷ_U>
+
+    and returns the corrected bladder signal  ŷ_B − α ŷ_U.
+
+    Note
+    ----
+    The pipeline (``scripts/02_lcmv.py``) uses the more robust
+    **per-window median** of ``diagnostics["alpha_leakage"]`` values instead,
+    and falls back to this function only when no per-window values are
+    available.  The paper definition matches the per-window median approach.
 
     Parameters
     ----------
@@ -296,7 +307,7 @@ def leakage_subtraction(
     Returns
     -------
     y_bladder_clean : (N,) bladder signal after leakage subtraction
-    alpha           : scalar leakage coefficient
+    alpha           : global OLS leakage coefficient
     """
     denom = float(np.dot(y_uterus, y_uterus))
     alpha = float(np.dot(y_bladder, y_uterus)) / denom if denom > 1e-12 else 0.0
