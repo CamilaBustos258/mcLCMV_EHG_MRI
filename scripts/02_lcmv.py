@@ -75,6 +75,10 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
                                                              results_light.npz,
                                                              results_full.pkl}
 
+    For sessions without a uterus segmentation (e.g. male subjects) the
+    pipeline runs in **bladder-only mode**: only the bladder beamformer is
+    computed and ``y_uterus`` is an all-zeros array.
+
     Returns
     -------
     Path to the output directory.
@@ -106,6 +110,13 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
     with open(meta_path) as fh:
         meta = json.load(fh)
 
+    has_uterus = len(uterus_verts) > 0
+    if not has_uterus:
+        log.info(
+            "No uterus surface for %s/%s (sex=%s) — running in bladder-only mode.",
+            subject_id, session_id, meta.get("sex", "unknown"),
+        )
+
     # ── Resample to TARGET_FS if needed ───────────────────────────────────
     if abs(fs - TARGET_FS) > 1.0:
         log.info("Resampling %.0f Hz → %.0f Hz …", fs, TARGET_FS)
@@ -134,21 +145,29 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
     # ── Steering dictionaries ──────────────────────────────────────────────
     log.info("Building steering dictionaries (p=%.1f) …", STEERING_EXPONENT)
     array_center = electrode_coords.mean(axis=0)
-    D_ut = build_steering_dictionary(electrode_coords, uterus_verts,  p=STEERING_EXPONENT)
     D_bl = build_steering_dictionary(electrode_coords, bladder_verts, p=STEERING_EXPONENT)
-    log.info("  D_ut: %s,  D_bl: %s", D_ut.shape, D_bl.shape)
+    if has_uterus:
+        D_ut = build_steering_dictionary(electrode_coords, uterus_verts, p=STEERING_EXPONENT)
+        log.info("  D_ut: %s,  D_bl: %s", D_ut.shape, D_bl.shape)
+    else:
+        D_ut = np.zeros((n_ch, 0))
+        log.info("  D_ut: n/a (bladder-only),  D_bl: %s", D_bl.shape)
 
     # ── DOA vectors + spherical k-means ───────────────────────────────────
     log.info("DOA vectors + spherical k-means (K=%d) …", N_CLUSTERS)
-    doa_ut = compute_doa_vectors(uterus_verts,  array_center)
     doa_bl = compute_doa_vectors(bladder_verts, array_center)
-
-    S_ut, lab_ut, _ = build_cluster_representatives(
-        doa_ut, D_ut, k=N_CLUSTERS, n_iter=N_KMEANS_ITER, seed=0)
     S_bl, lab_bl, _ = build_cluster_representatives(
         doa_bl, D_bl, k=N_CLUSTERS, n_iter=N_KMEANS_ITER, seed=1)
-
-    log.info("  S_ut: %s,  S_bl: %s", S_ut.shape, S_bl.shape)
+    if has_uterus:
+        doa_ut = compute_doa_vectors(uterus_verts, array_center)
+        S_ut, lab_ut, _ = build_cluster_representatives(
+            doa_ut, D_ut, k=N_CLUSTERS, n_iter=N_KMEANS_ITER, seed=0)
+        log.info("  S_ut: %s,  S_bl: %s", S_ut.shape, S_bl.shape)
+    else:
+        doa_ut  = np.zeros((0, 3))
+        S_ut    = None                               # triggers bladder-only mode
+        lab_ut  = np.zeros(0, dtype=np.intp)
+        log.info("  S_ut: n/a (bladder-only),  S_bl: %s", S_bl.shape)
 
     # ── Windowed dual LCMV ─────────────────────────────────────────────────
     log.info(
@@ -173,15 +192,23 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
     log.info("  %d windows processed.", n_windows)
 
     if diagnostics:
-        ut_pass = np.mean([d["ut_pass_residual"] for d in diagnostics])
-        ut_null = np.mean([d["ut_null_residual"] for d in diagnostics])
-        bl_pass = np.mean([d["bl_pass_residual"] for d in diagnostics])
-        bl_null = np.mean([d["bl_null_residual"] for d in diagnostics])
-        log.info(
-            "  Constraint residuals (mean) — "
-            "ut_pass=%.2e  ut_null=%.2e  bl_pass=%.2e  bl_null=%.2e",
-            ut_pass, ut_null, bl_pass, bl_null,
-        )
+        bl_pass = float(np.mean([d["bl_pass_residual"] for d in diagnostics]))
+        bl_null = float(np.mean([d["bl_null_residual"] for d in diagnostics]))
+        if has_uterus:
+            ut_pass = float(np.mean([d["ut_pass_residual"] for d in diagnostics]))
+            ut_null = float(np.mean([d["ut_null_residual"] for d in diagnostics]))
+            log.info(
+                "  Constraint residuals (mean) — "
+                "ut_pass=%.2e  ut_null=%.2e  bl_pass=%.2e  bl_null=%.2e",
+                ut_pass, ut_null, bl_pass, bl_null,
+            )
+        else:
+            ut_pass = ut_null = None
+            log.info(
+                "  Constraint residuals (mean, bladder-only) — "
+                "bl_pass=%.2e  bl_null=%.2e",
+                bl_pass, bl_null,
+            )
 
     # ── Leakage subtraction ────────────────────────────────────────────────
     # Use the median of per-window leakage coefficients as the global α.
@@ -195,8 +222,11 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
     else:
         _, alpha = leakage_subtraction(y_uterus, y_bladder)
     y_bladder_clean = y_bladder - alpha * y_uterus
-    log.info("Leakage subtraction …  α = %.4f  (median of %d per-window values)",
-             alpha, len(alpha_per_window))
+    if has_uterus:
+        log.info("Leakage subtraction …  α = %.4f  (median of %d per-window values)",
+                 alpha, len(alpha_per_window))
+    else:
+        log.info("Bladder-only mode — leakage subtraction not applicable (α = 0).")
 
     # ── Save ──────────────────────────────────────────────────────────────
     out_dir = DERIV_ANALYSIS / subject_id / session_id
@@ -209,6 +239,7 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
             "session_id":   session_id,
             "sex":          meta.get("sex"),
             "cycle_phase":  meta.get("cycle_phase"),
+            "bladder_only": not has_uterus,
         },
         "config": {
             "fs":                  float(fs),
@@ -232,8 +263,8 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
             "n_mri_samples":     int(n_samples),
             "n_windows":         n_windows,
             "alpha_leakage":     float(alpha),
-            "mean_ut_pass_res":  float(ut_pass) if diagnostics else None,
-            "mean_ut_null_res":  float(ut_null) if diagnostics else None,
+            "mean_ut_pass_res":  ut_pass if diagnostics else None,
+            "mean_ut_null_res":  ut_null if diagnostics else None,
             "mean_bl_pass_res":  float(bl_pass) if diagnostics else None,
             "mean_bl_null_res":  float(bl_null) if diagnostics else None,
         },
@@ -242,6 +273,7 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
         json.dump(config_out, fh, indent=2)
 
     t_axis = np.arange(n_samples) / fs
+    S_ut_save = S_ut if has_uterus else np.zeros((n_ch, 0), dtype=complex)
     np.savez_compressed(
         out_dir / "results_light.npz",
         t               = t_axis,
@@ -252,7 +284,7 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
         lab_bl          = lab_bl,
         uterus_doa      = doa_ut,
         bladder_doa     = doa_bl,
-        S_ut_clusters   = S_ut,
+        S_ut_clusters   = S_ut_save,
         S_bl_clusters   = S_bl,
     )
 
@@ -268,7 +300,7 @@ def run_lcmv_session(subject_id: str, session_id: str) -> Path:
         "bladder_doa":      doa_bl,
         "lab_ut":           lab_ut,
         "lab_bl":           lab_bl,
-        "S_ut_clusters":    S_ut,
+        "S_ut_clusters":    S_ut_save,
         "S_bl_clusters":    S_bl,
         "t":                t_axis,
         "uterus_ts":        y_uterus,

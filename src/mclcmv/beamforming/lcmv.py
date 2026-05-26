@@ -78,7 +78,7 @@ def add_diagonal_loading(R: np.ndarray, load_factor: float = 1e-3) -> np.ndarray
 
 def build_constraint_matrix(
     S_pass: np.ndarray,
-    S_null: np.ndarray,
+    S_null: np.ndarray | None,
     n_null: int = 2,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Assemble the constraint matrix C and target vector f.
@@ -92,33 +92,43 @@ def build_constraint_matrix(
     M = 8 channels (5 degrees of freedom for variance minimisation).
 
     The n_null null columns are the first n_null raw cluster steering vectors
-    of the opposing organ (S_null[:,0], S_null[:,1], …). 
+    of the opposing organ (S_null[:,0], S_null[:,1], …).
+
+    When *S_null* is ``None`` or *n_null* is 0 the function returns a
+    pass-only constraint matrix (L = 1, f = [1]).  This is used in
+    bladder-only mode when there is no opposing organ (e.g. male subjects).
 
     Parameters
     ----------
-    S_pass : (M, K_U) uterus cluster representative steering vectors
-    S_null : (M, K_B) bladder cluster representative steering vectors
-    n_null : number of null directions to retain (default 2)
+    S_pass : (M, K_U) cluster representative steering vectors for the pass organ
+    S_null : (M, K_B) cluster representative steering vectors for the null organ,
+             or ``None`` for a pass-only constraint
+    n_null : number of null directions to retain (default 2);
+             pass 0 to suppress null columns even when S_null is provided
 
     Returns
     -------
-    C : (M, 1 + n_null) constraint matrix
-    f : (1 + n_null,) target vector
+    C : (M, 1 + n_null_eff) constraint matrix  (shape (M, 1) when S_null is None)
+    f : (1 + n_null_eff,) target vector
     """
     # Single pass vector: normalised mean of the K_U cluster representatives
     s_pass = S_pass.mean(axis=1)
     s_pass = s_pass / (np.linalg.norm(s_pass) + 1e-12)
     C_pass = s_pass[:, None]                     # (M, 1)
 
-    # Null columns: first n_null raw cluster steering vectors of the
-    # opposing organ.  Each column is already unit-normalised (from
-    # cluster_to_steering_vector).  Using raw vectors leaves the remaining
-    # K − n_null cluster directions unconstrained, which is intentional.
-    K = S_null.shape[1]
-    n_null_eff = min(n_null, K)
-    Q_null = S_null[:, :n_null_eff]              # (M, n_null_eff)
+    if S_null is None or n_null == 0:
+        # Pass-only constraint — no null directions
+        C = C_pass
+    else:
+        # Null columns: first n_null raw cluster steering vectors of the
+        # opposing organ.  Each column is already unit-normalised (from
+        # cluster_to_steering_vector).  Using raw vectors leaves the remaining
+        # K − n_null cluster directions unconstrained, which is intentional.
+        K = S_null.shape[1]
+        n_null_eff = min(n_null, K)
+        Q_null = S_null[:, :n_null_eff]          # (M, n_null_eff)
+        C = np.hstack([C_pass, Q_null])          # (M, 1 + n_null_eff)
 
-    C = np.hstack([C_pass, Q_null])              # (M, 1 + n_null_eff)
     f = np.zeros(C.shape[1], dtype=complex)
     f[0] = 1.0                                   # unity gain on the pass direction
     return C, f
@@ -163,7 +173,7 @@ def hann_window(n: int) -> np.ndarray:
 def run_windowed_lcmv(
     data_uterus_band: np.ndarray,
     data_bladder_band: np.ndarray,
-    S_uterus: np.ndarray,
+    S_uterus: np.ndarray | None,
     S_bladder: np.ndarray,
     fs: float,
     window_size_sec: float = 120.0,
@@ -177,31 +187,40 @@ def run_windowed_lcmv(
     Runs two separate LCMV beamformers — one per organ — each using the other
     organ's cluster subspace as null constraints and its own band's covariance:
 
-        w_ut: pass = S_uterus,  null = whitened(S_bladder),  R from uterus band
-        w_bl: pass = S_bladder, null = whitened(S_uterus),   R from bladder band
+        w_ut: pass = S_uterus,  null = S_bladder,  R from uterus band
+        w_bl: pass = S_bladder, null = S_uterus,   R from bladder band
+
+    **Bladder-only mode** (``S_uterus=None``): when no uterus segmentation is
+    available (e.g. male subjects) the function skips the uterus beamformer
+    entirely.  The bladder beamformer runs with a pass-only constraint (no null
+    columns, because there is no opposing organ to suppress).  ``y_uterus`` is
+    returned as an all-zeros array and ``alpha_leakage`` is 0 in every window.
 
     Parameters
     ----------
     data_uterus_band  : (M, N) uterus-band filtered EHG
     data_bladder_band : (M, N) bladder-band filtered EHG
-    S_uterus          : (M, K_U) uterus cluster steering vectors
+    S_uterus          : (M, K_U) uterus cluster steering vectors, or ``None``
+                        to run in bladder-only mode
     S_bladder         : (M, K_B) bladder cluster steering vectors
     fs                : sampling frequency in Hz
     window_size_sec   : Hann window length in seconds (default 120 s)
     step_size_sec     : step between windows in seconds (default 30 s → 75% overlap)
     beta              : Bayesian shrinkage factor
     diag_load         : diagonal loading factor
-    n_null            : null directions retained per organ (default 2)
+    n_null            : null directions retained per organ (default 2);
+                        ignored in bladder-only mode
 
     Returns
     -------
-    y_uterus    : (N,) reconstructed uterus time series (overlap-add)
+    y_uterus    : (N,) reconstructed uterus time series (zeros in bladder-only mode)
     y_bladder   : (N,) reconstructed bladder time series (overlap-add, pre-leakage)
     diagnostics : list of per-window dicts with keys:
                   window_idx, t0, t1,
-                  ut_pass_residual, ut_null_residual,
+                  ut_pass_residual, ut_null_residual  (NaN in bladder-only mode),
                   bl_pass_residual, bl_null_residual,
-                  alpha_leakage, w_ut, w_bl
+                  alpha_leakage  (0.0 in bladder-only mode),
+                  w_ut  (zero vector in bladder-only mode), w_bl
     """
     N = data_uterus_band.shape[1]
     win_len = int(window_size_sec * fs)
@@ -213,25 +232,25 @@ def run_windowed_lcmv(
     y_bladder = np.zeros(N)
     norm_accum = np.zeros(N)
 
-    # Build both constraint matrices once — they are data-independent.
-    # Each C has shape (M, 1 + n_null): one mean pass vector + n_null null dirs.
-    C_ut, f_ut = build_constraint_matrix(S_uterus,  S_bladder, n_null=n_null)
-    C_bl, f_bl = build_constraint_matrix(S_bladder, S_uterus,  n_null=n_null)
+    # Build constraint matrices once — they are data-independent.
+    # In bladder-only mode (S_uterus is None) only the bladder matrix is built,
+    # using a pass-only constraint since there is no opposing organ to null out.
+    bladder_only = S_uterus is None
+    if not bladder_only:
+        C_ut, f_ut = build_constraint_matrix(S_uterus, S_bladder, n_null=n_null)
+        C_bl, f_bl = build_constraint_matrix(S_bladder, S_uterus, n_null=n_null)
+    else:
+        C_ut = f_ut = None   # unused
+        C_bl, f_bl = build_constraint_matrix(S_bladder, None, n_null=0)
 
+    M = data_bladder_band.shape[0]
     diagnostics = []
 
     for wi in tqdm(range(n_windows), desc="LCMV windows", leave=False):
         start = wi * step
         end = start + win_len
 
-        seg_u = data_uterus_band[:, start:end]
         seg_b = data_bladder_band[:, start:end]
-
-        # Uterus beamformer — covariance from uterus-band segment
-        R_ut = sample_covariance(seg_u)
-        R_ut = shrink_covariance(R_ut, beta=beta)
-        R_ut = add_diagonal_loading(R_ut, load_factor=diag_load)
-        w_ut = lcmv_weights(R_ut, C_ut, f_ut)
 
         # Bladder beamformer — covariance from bladder-band segment
         R_bl = sample_covariance(seg_b)
@@ -239,19 +258,35 @@ def run_windowed_lcmv(
         R_bl = add_diagonal_loading(R_bl, load_factor=diag_load)
         w_bl = lcmv_weights(R_bl, C_bl, f_bl)
 
-        # Constraint residuals: column 0 = pass, columns 1: = null
-        ut_pass_res = constraint_residual(C_ut[:, :1], w_ut, f_ut[:1])
-        ut_null_res = float(np.max(np.abs(C_ut[:, 1:].conj().T @ w_ut)))
+        # Bladder constraint residuals
         bl_pass_res = constraint_residual(C_bl[:, :1], w_bl, f_bl[:1])
-        bl_null_res = float(np.max(np.abs(C_bl[:, 1:].conj().T @ w_bl)))
-
-        # Per-window beamformer outputs (tapered, pre-WOLA)
-        y_ut_w = (w_ut.conj() @ seg_u).real
+        bl_null_res = (float(np.max(np.abs(C_bl[:, 1:].conj().T @ w_bl)))
+                       if C_bl.shape[1] > 1 else 0.0)
         y_bl_w = (w_bl.conj() @ seg_b).real
 
-        # Per-window leakage coefficient α_w = <y_bl_w, y_ut_w> / <y_ut_w, y_ut_w>
-        denom_w = float(np.dot(y_ut_w, y_ut_w))
-        alpha_w = float(np.dot(y_bl_w, y_ut_w)) / denom_w if denom_w > 1e-12 else 0.0
+        if not bladder_only:
+            # Uterus beamformer — covariance from uterus-band segment
+            seg_u = data_uterus_band[:, start:end]
+            R_ut = sample_covariance(seg_u)
+            R_ut = shrink_covariance(R_ut, beta=beta)
+            R_ut = add_diagonal_loading(R_ut, load_factor=diag_load)
+            w_ut = lcmv_weights(R_ut, C_ut, f_ut)
+
+            # Uterus constraint residuals
+            ut_pass_res = constraint_residual(C_ut[:, :1], w_ut, f_ut[:1])
+            ut_null_res = float(np.max(np.abs(C_ut[:, 1:].conj().T @ w_ut)))
+            y_ut_w = (w_ut.conj() @ seg_u).real
+
+            # Per-window leakage coefficient α_w = <y_bl_w, y_ut_w> / <y_ut_w, y_ut_w>
+            denom_w = float(np.dot(y_ut_w, y_ut_w))
+            alpha_w = (float(np.dot(y_bl_w, y_ut_w)) / denom_w
+                       if denom_w > 1e-12 else 0.0)
+        else:
+            # Bladder-only mode: skip uterus beamformer
+            w_ut = np.zeros(M, dtype=complex)
+            ut_pass_res = ut_null_res = np.nan
+            y_ut_w = np.zeros(win_len)
+            alpha_w = 0.0
 
         diagnostics.append({
             "window_idx": wi,
@@ -267,7 +302,8 @@ def run_windowed_lcmv(
         })
 
         # Overlap-add accumulation
-        y_uterus[start:end]  += y_ut_w * hann
+        if not bladder_only:
+            y_uterus[start:end] += y_ut_w * hann
         y_bladder[start:end] += y_bl_w * hann
         norm_accum[start:end] += hann ** 2
 
