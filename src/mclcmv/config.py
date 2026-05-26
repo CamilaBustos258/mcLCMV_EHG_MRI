@@ -17,13 +17,37 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parents[2]
 
 DATA_ROOT: Path = PROJECT_ROOT / "data"
 
-# Source data location.  Override with the environment variable
-# MCLCMV_SOURCEDATA if your BIDS sourcedata lives outside the project tree.
+# Source data location — resolved with a three-level cascade:
+#   1. Environment variable MCLCMV_SOURCEDATA  (highest priority)
+#   2. data_config.yaml at the project root    (gitignored — local path stays private)
+#   3. data/sourcedata/ inside the repo        (fallback for self-contained setups)
+#
+# To configure:
+#   cp data_config.yaml.example data_config.yaml   # then edit sourcedata_root
+# or:
 #   export MCLCMV_SOURCEDATA=/path/to/your/sourcedata
+
 import os as _os
-SOURCEDATA: Path = Path(_os.environ["MCLCMV_SOURCEDATA"]) \
-    if "MCLCMV_SOURCEDATA" in _os.environ \
-    else DATA_ROOT / "sourcedata"
+
+
+def _resolve_sourcedata() -> Path:
+    """Return the resolved SOURCEDATA path (env var > data_config.yaml > default)."""
+    # 1. Environment variable
+    if "MCLCMV_SOURCEDATA" in _os.environ:
+        return Path(_os.environ["MCLCMV_SOURCEDATA"])
+    # 2. data_config.yaml (gitignored, local only)
+    _cfg = PROJECT_ROOT / "data_config.yaml"
+    if _cfg.exists():
+        for _line in _cfg.read_text(encoding="utf-8").splitlines():
+            _line = _line.strip()
+            if _line.startswith("sourcedata_root") and ":" in _line:
+                _, _, _val = _line.partition(":")
+                return Path(_val.strip()).expanduser().resolve()
+    # 3. Default: data/sourcedata/ inside the repo
+    return DATA_ROOT / "sourcedata"
+
+
+SOURCEDATA: Path = _resolve_sourcedata()
 
 DERIVATIVES:    Path = DATA_ROOT / "derivatives"
 DERIV_SYNCED:   Path = DERIVATIVES / "synced"    # session_data.npz outputs

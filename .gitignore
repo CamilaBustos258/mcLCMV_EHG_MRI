@@ -7,6 +7,9 @@ data/sessions.json
 # Session registry contains participant metadata — keep local only
 config/orientation_registry.json
 
+# Local data path config — NEVER commit (contains absolute local path to shared data)
+data_config.yaml
+
 # OS
 .DS_Store
 Thumbs.db
