@@ -1,8 +1,39 @@
-"""Command-line interface (entry point ``mclcmv-cli`` from pyproject.toml)."""
+"""Command-line interface (entry point ``mclcmv-cli`` from pyproject.toml).
+
+Each sub-command delegates to the corresponding pipeline script so that the
+CLI and the scripts are always in sync.
+
+Usage
+-----
+mclcmv-cli preprocess --subject sub-06 --session ses-20250828
+mclcmv-cli preprocess --all
+
+mclcmv-cli beamform --subject sub-06 --session ses-20250828
+mclcmv-cli beamform --all
+
+mclcmv-cli table
+"""
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import click
+
+# Resolve the scripts directory relative to this file:
+# src/mclcmv/cli.py → parents[2] = project root
+_SCRIPTS: Path = Path(__file__).resolve().parents[2] / "scripts"
+
+
+def _run(script: str, extra_args: list[str]) -> None:
+    """Run a pipeline script as a subprocess and propagate its exit code."""
+    result = subprocess.run(
+        [sys.executable, str(_SCRIPTS / script)] + extra_args,
+        check=False,
+    )
+    raise SystemExit(result.returncode)
 
 
 @click.group()
@@ -11,43 +42,43 @@ def main() -> None:
 
 
 @main.command("preprocess")
-@click.option("--subject", required=True, help="Subject ID, e.g. sub-02")
-@click.option("--session", required=True, help="Session ID, e.g. ses-20250714")
-def preprocess(subject: str, session: str) -> None:
-    """Stage 01 — EHG + MRI preprocessing (filtering, surface extraction)."""
-    raise NotImplementedError
-
-
-@main.command("forward")
-@click.option("--subject", required=True)
-@click.option("--session", required=True)
-def forward(subject: str, session: str) -> None:
-    """Stage 02 — build steering dictionaries from MRI segmentations."""
-    raise NotImplementedError
-
-
-@main.command("cluster")
-@click.option("--subject", required=True)
-@click.option("--session", required=True)
-def cluster(subject: str, session: str) -> None:
-    """Stage 03 — DOA clustering and cluster representative steering vectors."""
-    raise NotImplementedError
+@click.option("--subject", metavar="SUBJECT_ID", default=None,
+              help="BIDS subject ID, e.g. sub-06")
+@click.option("--session", metavar="SESSION_ID", default=None,
+              help="BIDS session ID, e.g. ses-20250828")
+@click.option("--all", "run_all", is_flag=True, default=False,
+              help="Process all non-skipped sessions in the orientation registry.")
+def preprocess(subject: str | None, session: str | None, run_all: bool) -> None:
+    """Stage 01 — MRI surface extraction and EHG preprocessing."""
+    if run_all:
+        _run("01_preprocess.py", ["--all"])
+    elif subject and session:
+        _run("01_preprocess.py", ["--subject", subject, "--session", session])
+    else:
+        raise click.UsageError("Provide --subject and --session, or use --all.")
 
 
 @main.command("beamform")
-@click.option("--subject", required=True)
-@click.option("--session", required=True)
-def beamform(subject: str, session: str) -> None:
-    """Stage 04 — windowed LCMV + overlap-add reconstruction."""
-    raise NotImplementedError
+@click.option("--subject", metavar="SUBJECT_ID", default=None,
+              help="BIDS subject ID, e.g. sub-06")
+@click.option("--session", metavar="SESSION_ID", default=None,
+              help="BIDS session ID, e.g. ses-20250828")
+@click.option("--all", "run_all", is_flag=True, default=False,
+              help="Process all non-skipped sessions in the orientation registry.")
+def beamform(subject: str | None, session: str | None, run_all: bool) -> None:
+    """Stage 02 — windowed dual LCMV beamformer (steering + clustering + WOLA)."""
+    if run_all:
+        _run("02_lcmv.py", ["--all"])
+    elif subject and session:
+        _run("02_lcmv.py", ["--subject", subject, "--session", session])
+    else:
+        raise click.UsageError("Provide --subject and --session, or use --all.")
 
 
-@main.command("evaluate")
-@click.option("--subject", required=True)
-@click.option("--session", required=True)
-def evaluate(subject: str, session: str) -> None:
-    """Stage 05 — separation metrics, leakage diagnostics, figures."""
-    raise NotImplementedError
+@main.command("table")
+def table() -> None:
+    """Stage 03 — print the results table for all processed sessions."""
+    _run("03_results_table.py", [])
 
 
 if __name__ == "__main__":

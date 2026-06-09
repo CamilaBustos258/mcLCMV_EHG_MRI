@@ -12,10 +12,19 @@
       "sex": "F",
       "cycle_phase": "Luteal"
     },
-    "ses-YYYYMMDD": {
+    "ses-YYYYMMDD2": {
       "orientation_case": "T1_(2,1,0)_flipZ",
       "sex": "M",
       "cycle_phase": null
+    }
+  },
+  "sub-16": {
+    "ses-YYYYMMDD": {
+      "orientation_case": "T1_(0,1,2)",
+      "sex": "F",
+      "cycle_phase": null,
+      "skip": true,
+      "skip_reason": "MRI segmentation pending"
     }
   }
 }

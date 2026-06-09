@@ -46,6 +46,7 @@ from mclcmv.config import (
     STEP_SIZE_SEC,
     UTERUS_BAND_HZ,
     WINDOW_SIZE_SEC,
+    load_active_sessions,
     load_orientation_registry,
 )
 from mclcmv.forward.steering import build_steering_dictionary, compute_doa_vectors
@@ -335,14 +336,8 @@ def main() -> None:
     if not args.run_all and (args.subject is None or args.session is None):
         parser.error("Provide --subject and --session, or use --all.")
 
-    registry = load_orientation_registry()
-
     if args.run_all:
-        sessions_to_run = [
-            (sub, ses)
-            for sub, sessions in registry.items()
-            for ses in sessions
-        ]
+        sessions_to_run = load_active_sessions()
     else:
         sessions_to_run = [(args.subject, args.session)]
 

@@ -39,6 +39,7 @@ from mclcmv.config import (
     EXPECTED_N_ELECTRODES,
     MAX_SURFACE_VERTS,
     SOURCEDATA,
+    load_active_sessions,
     load_orientation_registry,
 )
 from mclcmv.io.ehg import load_brainvision, read_markers
@@ -218,14 +219,8 @@ def main() -> None:
     if not args.run_all and (args.subject is None or args.session is None):
         parser.error("Provide --subject and --session, or use --all.")
 
-    registry = load_orientation_registry()
-
     if args.run_all:
-        sessions_to_run = [
-            (sub, ses)
-            for sub, sessions in registry.items()
-            for ses in sessions
-        ]
+        sessions_to_run = load_active_sessions()
     else:
         sessions_to_run = [(args.subject, args.session)]
 

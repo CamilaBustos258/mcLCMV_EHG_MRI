@@ -173,30 +173,46 @@ def load_session(subject_id: str, session_id: str) -> dict:
 
 
 def compute_all_metrics(r: dict) -> dict:
-    """Compute all 7 metrics from a results dict."""
-    K = r["config"]["K_ut"]
+    """Compute all 7 metrics from a results dict.
 
-    sep_mean, sep_std = compute_separation_angles(
-        r["uterus_doa"], r["lab_ut"], r["bladder_doa"], r["lab_bl"], k=K)
-    ut_comp_mean, ut_comp_std = compute_compactness(r["uterus_doa"], r["lab_ut"], k=K)
+    In bladder-only mode (no uterus segmentation) the uterus-specific metrics
+    (separation angle, uterus compactness, null gain, leakage α, Δr) are
+    returned as NaN and displayed as ``—`` in the table.
+    """
+    K = r["config"]["K_ut"]
+    bladder_only: bool = r.get("meta", {}).get("bladder_only", False)
+
+    if not bladder_only:
+        sep_mean, sep_std = compute_separation_angles(
+            r["uterus_doa"], r["lab_ut"], r["bladder_doa"], r["lab_bl"], k=K)
+        ut_comp_mean, ut_comp_std = compute_compactness(r["uterus_doa"], r["lab_ut"], k=K)
+        ng_mean, ng_std = (
+            compute_null_gain(r["S_bl_clusters"], r["w_ut"])
+            if r.get("w_ut") else (float("nan"), float("nan"))
+        )
+        med_alpha, med_dr, med_er = compute_leakage_metrics(
+            r["diagnostics"], r["bladder_ts"], r["bladder_clean_ts"])
+    else:
+        # Uterus-dependent metrics are undefined in bladder-only mode
+        nan = float("nan")
+        sep_mean = sep_std = nan
+        ut_comp_mean = ut_comp_std = nan
+        ng_mean = ng_std = nan
+        med_alpha = med_dr = nan
+        _, _, med_er = compute_leakage_metrics(
+            r["diagnostics"], r["bladder_ts"], r["bladder_clean_ts"])
+
     bl_comp_mean, bl_comp_std = compute_compactness(r["bladder_doa"], r["lab_bl"], k=K)
 
-    if "w_ut" in r and r["w_ut"]:
-        ng_mean, ng_std = compute_null_gain(r["S_bl_clusters"], r["w_ut"])
-    else:
-        ng_mean, ng_std = float("nan"), float("nan")
-
-    med_alpha, med_dr, med_er = compute_leakage_metrics(
-        r["diagnostics"], r["bladder_ts"], r["bladder_clean_ts"])
-
     return {
-        "sep_mean": sep_mean,     "sep_std": sep_std,
-        "ut_comp_mean": ut_comp_mean, "ut_comp_std": ut_comp_std,
-        "bl_comp_mean": bl_comp_mean, "bl_comp_std": bl_comp_std,
-        "ng_mean": ng_mean,       "ng_std": ng_std,
-        "alpha": med_alpha,
-        "delta_r": med_dr,
-        "energy_ratio": med_er,
+        "bladder_only":   bladder_only,
+        "sep_mean":       sep_mean,       "sep_std":       sep_std,
+        "ut_comp_mean":   ut_comp_mean,   "ut_comp_std":   ut_comp_std,
+        "bl_comp_mean":   bl_comp_mean,   "bl_comp_std":   bl_comp_std,
+        "ng_mean":        ng_mean,        "ng_std":        ng_std,
+        "alpha":          med_alpha,
+        "delta_r":        med_dr,
+        "energy_ratio":   med_er,
     }
 
 
@@ -238,7 +254,12 @@ def main() -> None:
             continue
 
         m = compute_all_metrics(r)
-        phase = r.get("meta", {}).get("cycle_phase", "")
+        meta   = r.get("meta", {})
+        phase  = meta.get("cycle_phase", "")
+        suffix = " (BL only)" if m["bladder_only"] else (f"  ({phase})" if phase else "")
+
+        def _fmt_scalar(v: float, fmt: str = ">6.3f") -> str:
+            return "   —  " if np.isnan(v) else format(v, fmt)
 
         print(
             f"{sub:<10} {ses:<14} "
@@ -246,10 +267,10 @@ def main() -> None:
             f"  {fmt_pm3(m['ut_comp_mean'], m['ut_comp_std']):>13} "
             f"  {fmt_pm3(m['bl_comp_mean'], m['bl_comp_std']):>13} "
             f"  {fmt_pm3(m['ng_mean'], m['ng_std']):>13} "
-            f"  {m['alpha']:>5.2f} "
-            f"  {m['delta_r']:>6.3f} "
-            f"  {m['energy_ratio']:>6.3f}"
-            + (f"  ({phase})" if phase else "")
+            f"  {_fmt_scalar(m['alpha'], '>5.2f')} "
+            f"  {_fmt_scalar(m['delta_r'])} "
+            f"  {_fmt_scalar(m['energy_ratio'])}"
+            + suffix
         )
 
     print(sep)

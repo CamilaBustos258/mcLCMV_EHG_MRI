@@ -74,6 +74,23 @@ def load_orientation_registry() -> dict[str, dict[str, Any]]:
         return json.load(f)
 
 
+def load_active_sessions() -> list[tuple[str, str]]:
+    """Return all (subject, session) pairs not marked ``"skip": true``.
+
+    Sessions can be excluded from batch processing by adding ``"skip": true``
+    to their registry entry (e.g. while a segmentation is pending).  Single-
+    session runs with ``--subject``/``--session`` always proceed regardless of
+    this flag.
+    """
+    registry = load_orientation_registry()
+    return [
+        (sub, ses)
+        for sub, sessions in registry.items()
+        for ses, meta in sessions.items()
+        if not meta.get("skip", False)
+    ]
+
+
 # ── Frequency bands (Hz) ───────────────────────────────────────────────────
 UTERUS_BAND_HZ:  tuple[float, float] = (0.005, 0.050)   # [5, 50] mHz
 BLADDER_BAND_HZ: tuple[float, float] = (0.025, 0.041)   # [25, 41] mHz
