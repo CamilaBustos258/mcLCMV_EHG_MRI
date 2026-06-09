@@ -3,6 +3,7 @@ data/sourcedata/
 data/rawdata/
 data/derivatives/
 data/sessions.json
+data/demo/metrics.txt
 
 # Session registry contains participant metadata — keep local only
 config/orientation_registry.json
